@@ -1,0 +1,369 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Core repository entity
+model Repository {
+  id                 String   @id @default(cuid())
+  provider           String   // e.g., "github"
+  owner              String
+  name               String
+  fullName           String   @unique // owner/name
+  htmlUrl            String   @unique
+  description        String?
+  defaultBranch      String   @default("main")
+  visibility         String   // "public" or "private"
+  language           String?
+  stars              Int      @default(0)
+  forks              Int      @default(0)
+  openIssuesCount    Int      @default(0)
+  createdAt          DateTime
+  updatedAt          DateTime
+  pushedAt           DateTime?
+  indexedAt          DateTime?
+  indexingStatus     String   @default("pending") // "pending", "in_progress", "completed", "failed"
+
+  // Relations
+  commits            Commit[]
+  pullRequests       PullRequest[]
+  issues             Issue[]
+  timelineEvents     TimelineEvent[]
+  fileArtifacts      FileArtifact[]
+  relationships      Relationship[]
+  analyses           Analysis[]
+  chatMessages       ChatMessage[]
+  snapshots          RepositorySnapshot[]
+
+  @@index([provider, owner])
+  @@index([fullName])
+  @@index([indexingStatus])
+  @@index([indexedAt])
+  @@index([updatedAt])
+}
+
+// Git commit entity
+model Commit {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  sha             String   @unique
+  message         String
+  authorLogin     String
+  authorName      String?
+  committerLogin  String?
+  committedAt     DateTime
+  authoredAt      DateTime
+  additions       Int      @default(0)
+  deletions       Int      @default(0)
+  changedFiles    Int      @default(0)
+  htmlUrl         String
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  files           CommitFile[]
+  pullRequests    PullRequest[] @relation("CommitPullRequests")
+  reviews         PullRequestReview[]
+  comments        PullRequestComment[]
+  relationships   Relationship[] @relation("CommitRelationships")
+  timelineEvents  TimelineEvent[] @relation("CommitEvents")
+
+  @@unique([repositoryId, sha])
+  @@index([repositoryId])
+  @@index([authorLogin])
+  @@index([committedAt])
+  @@index([authoredAt])
+}
+
+// Individual file changes within a commit
+model CommitFile {
+  id        String   @id @default(cuid())
+  commitId  String
+  path      String
+  status    String   // "added", "modified", "deleted", etc.
+  additions Int      @default(0)
+  deletions Int      @default(0)
+  changes   Int      @default(0)
+  blobUrl   String?
+  rawUrl    String?
+
+  // Relations
+  commit    Commit @relation(fields: [commitId], references: [id], onDelete: Cascade)
+
+  @@unique([commitId, path])
+  @@index([commitId])
+  @@index([path])
+  @@index([status])
+}
+
+// Pull request entity
+model PullRequest {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  number          Int
+  title           String
+  body            String?
+  authorLogin     String
+  state           String   // "open", "closed", "merged"
+  draft           Boolean  @default(false)
+  merged          Boolean  @default(false)
+  mergeCommitSha  String?
+  createdAt       DateTime
+  updatedAt       DateTime
+  closedAt        DateTime?
+  mergedAt        DateTime?
+  htmlUrl         String
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  commits         Commit[] @relation("CommitPullRequests")
+  reviews         PullRequestReview[]
+  comments        PullRequestComment[]
+  relationships   Relationship[] @relation("PRRelationships")
+  timelineEvents  TimelineEvent[] @relation("PREvents")
+  chatMessages    ChatMessage[] @relation("PRChat")
+
+  @@unique([repositoryId, number])
+  @@index([repositoryId])
+  @@index([authorLogin])
+  @@index([state])
+  @@index([createdAt])
+  @@index([mergedAt])
+}
+
+// Pull request review entity
+model PullRequestReview {
+  id              String   @id @default(cuid())
+  pullRequestId   String
+  reviewId        String   // External review ID
+  authorLogin     String
+  state           String   // "approved", "changes_requested", "commented", "pending", "dismissed"
+  body            String?
+  commitSha       String
+  submittedAt     DateTime
+  htmlUrl         String
+
+  // Relations
+  pullRequest     PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  commit          Commit @relation(fields: [commitSha], references: [sha], onDelete: Cascade)
+  comments        PullRequestComment[]
+  relationships   Relationship[] @relation("ReviewRelationships")
+
+  @@unique([pullRequestId, reviewId])
+  @@index([pullRequestId])
+  @@index([authorLogin])
+  @@index([state])
+  @@index([submittedAt])
+}
+
+// Individual comments within a pull request
+model PullRequestComment {
+  id              String   @id @default(cuid())
+  pullRequestId   String
+  reviewId        String?
+  authorLogin     String
+  body            String
+  path            String?
+  line            Int?
+  commitSha       String
+  createdAt       DateTime
+  htmlUrl         String
+
+  // Relations
+  pullRequest     PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  review          PullRequestReview? @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+  commit          Commit @relation(fields: [commitSha], references: [sha], onDelete: Cascade)
+  relationships   Relationship[] @relation("CommentRelationships")
+
+  @@index([pullRequestId])
+  @@index([reviewId])
+  @@index([authorLogin])
+  @@index([path])
+  @@index([createdAt])
+}
+
+// GitHub issue entity
+model Issue {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  number          Int
+  title           String
+  body            String?
+  authorLogin     String
+  state           String   // "open", "closed"
+  createdAt       DateTime
+  updatedAt       DateTime
+  closedAt        DateTime?
+  htmlUrl         String
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  comments        IssueComment[]
+  relationships   Relationship[] @relation("IssueRelationships")
+  timelineEvents  TimelineEvent[] @relation("IssueEvents")
+  chatMessages    ChatMessage[] @relation("IssueChat")
+
+  @@unique([repositoryId, number])
+  @@index([repositoryId])
+  @@index([authorLogin])
+  @@index([state])
+  @@index([createdAt])
+}
+
+// Individual comments within an issue
+model IssueComment {
+  id              String   @id @default(cuid())
+  issueId         String
+  authorLogin     String
+  body            String
+  createdAt       DateTime
+  htmlUrl         String
+
+  // Relations
+  issue           Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  relationships   Relationship[] @relation("IssueCommentRelationships")
+
+  @@index([issueId])
+  @@index([authorLogin])
+  @@index([createdAt])
+}
+
+// Timeline events (stars, forks, etc.)
+model TimelineEvent {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  sourceType      String   // "commit", "pullRequest", "issue"
+  sourceId        String   // ID of commit, PR, or issue
+  eventType       String   // "starred", "forked", "opened", "closed", etc.
+  actorLogin      String?
+  createdAt       DateTime
+  metadataJson    String?  // JSON string for flexible metadata
+  htmlUrl         String?
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  commit          Commit? @relation("CommitEvents", fields: [sourceId], references: [id], onDelete: SetNull)
+  pullRequest     PullRequest? @relation("PREvents", fields: [sourceId], references: [id], onDelete: SetNull)
+  issue           Issue? @relation("IssueEvents", fields: [sourceId], references: [id], onDelete: SetNull)
+  relationships   Relationship[] @relation("EventRelationships")
+
+  @@index([repositoryId])
+  @@index([sourceType, sourceId])
+  @@index([eventType])
+  @@index([actorLogin])
+  @@index([createdAt])
+}
+
+// File artifacts in repository
+model FileArtifact {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  path            String
+  currentSha      String?  // Latest commit SHA that modified this file
+  currentBlobSha  String?  // SHA of current blob
+  lastSeen        DateTime
+  language        String?  // Programming language detected
+  size            Int      @default(0) // File size in bytes
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  relationships   Relationship[] @relation("FileRelationships")
+
+  @@unique([repositoryId, path])
+  @@index([repositoryId])
+  @@index([path])
+  @@index([language])
+  @@index([lastSeen])
+}
+
+// Entity relationships (commits mention issues, PRs reference commits, etc.)
+model Relationship {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  sourceType      String   // "commit", "pullRequest", "issue", "issueComment", "prComment", "review", "file"
+  sourceId        String
+  relationType    String   // "mentions", "resolves", "references", "authored", "reviewed", "requested_review"
+  targetType      String   // "commit", "pullRequest", "issue", "user"
+  targetId        String
+  confidence      Float    @default(1.0) // 0.0 to 1.0
+  evidenceJson    String?  // JSON evidence for the relationship
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  commit          Commit? @relation("CommitRelationships", fields: [sourceId], references: [id], onDelete: SetNull)
+  pullRequest     PullRequest? @relation("PRRelationships", fields: [sourceId], references: [id], onDelete: SetNull)
+  issue           Issue? @relation("IssueRelationships", fields: [sourceId], references: [id], onDelete: SetNull)
+  issueComment    IssueComment? @relation("IssueCommentRelationships", fields: [sourceId], references: [id], onDelete: SetNull)
+  prComment       PullRequestComment? @relation("CommentRelationships", fields: [sourceId], references: [id], onDelete: SetNull)
+  review          PullRequestReview? @relation("ReviewRelationships", fields: [sourceId], references: [id], onDelete: SetNull)
+  fileArtifact    FileArtifact? @relation("FileRelationships", fields: [sourceId], references: [id], onDelete: SetNull)
+  timelineEvent   TimelineEvent? @relation("EventRelationships", fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@index([repositoryId])
+  @@index([sourceType, sourceId])
+  @@index([targetType, targetId])
+  @@index([relationType])
+  @@index([confidence])
+}
+
+// AI-generated analysis results
+model Analysis {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  entityType      String   // "commit", "pullRequest", "issue", "file", "repository"
+  entityId        String
+  question        String   // The question being analyzed
+  model           String   // AI model used for analysis
+  answerJson      String   // JSON-serialized answer/analysis
+  generatedAt     DateTime @default(now())
+  evidenceHash    String?  // Hash of evidence used for consistency checking
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([repositoryId])
+  @@index([entityType, entityId])
+  @@index([model])
+  @@index([generatedAt])
+}
+
+// Chat messages for conversational context
+model ChatMessage {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  sessionId       String   // Session or conversation ID
+  role            String   // "user", "assistant", "system"
+  content         String
+  citationsJson   String?  // JSON array of citations
+  createdAt       DateTime @default(now())
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  pullRequest     PullRequest? @relation("PRChat")
+  issue           Issue? @relation("IssueChat")
+
+  @@index([repositoryId])
+  @@index([sessionId])
+  @@index([role])
+  @@index([createdAt])
+}
+
+// Snapshots of repository state at specific points in time
+model RepositorySnapshot {
+  id              String   @id @default(cuid())
+  repositoryId    String
+  snapshotDate    DateTime
+  branch          String
+  metadataJson    String   // JSON with repo stats at snapshot time
+
+  // Relations
+  repository      Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, snapshotDate, branch])
+  @@index([repositoryId])
+  @@index([snapshotDate])
+  @@index([branch])
+}
